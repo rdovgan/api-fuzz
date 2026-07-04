@@ -11,7 +11,7 @@ Three complementary layers, one shared `./reports` volume:
 |-------|------|----------------|-----------|
 | 1 | **Schemathesis** | types, boundaries, schema/status conformance, 5xx | no |
 | 2 | **OWASP ZAP** (`zap-api-scan`) | SQLi, XSS, path traversal, injection (generic) | no |
-| 3 | **ai-fuzzer** (this repo) | field-*semantic* payloads via Claude: date-shift on date fields, SQLi smuggled through an `email`, IDOR-shaped ids, traversal on `path`/`file` fields | yes |
+| 3 | **ai-fuzzer** (this repo) | field-*semantic* payloads via a GLM model (Z.ai): date-shift on date fields, SQLi smuggled through an `email`, IDOR-shaped ids, traversal on `path`/`file` fields | yes |
 
 Layers 1–2 give ~80% coverage with zero AI. Layer 3 adds the semantic payloads
 generic scanners miss because they ignore what a field *means*.
@@ -19,7 +19,7 @@ generic scanners miss because they ignore what a field *means*.
 ## Quick start
 
 ```bash
-cp .env.example .env      # edit SPEC_URL, TARGET_URL, TARGET_AUTH, ANTHROPIC_API_KEY
+cp .env.example .env      # edit SPEC_URL, TARGET_URL, TARGET_AUTH, ANTHROPIC_API_KEY (Z.ai key)
 ./run.sh                  # all three layers, aggregated exit code
 # or a single layer:
 ./run.sh schemathesis
@@ -59,8 +59,9 @@ without `run.sh`.)
 | `SPEC_URL` | OpenAPI doc URL (Spring: `…/v3/api-docs`) |
 | `TARGET_URL` | Base URL of the running service |
 | `TARGET_AUTH` | Value for the `Authorization` header (blank if none) |
-| `ANTHROPIC_API_KEY` | for layer 3 |
-| `FUZZ_MODEL` | model for payload generation (default `claude-sonnet-4-5`) |
+| `ANTHROPIC_API_KEY` | Z.ai API key, for layer 3 (yes, the var is still named `ANTHROPIC_API_KEY` — see below) |
+| `ANTHROPIC_BASE_URL` | Anthropic-compatible endpoint (default `https://api.z.ai/api/anthropic`) |
+| `FUZZ_MODEL` | model for payload generation (default `glm-5.2`) |
 | `FUZZ_MAX_PAYLOADS_PER_PARAM` | cap per parameter (default 12) |
 | `AI_FAIL_ON` | `fail` \| `warn` \| `never` — severity that fails the build |
 | `STH_EXAMPLES` | Schemathesis examples per operation (default 150) |
@@ -71,7 +72,7 @@ without `run.sh`.)
 OpenAPI spec ──► spec_parser ──► InjectionTarget per param (name, type,
                                   format, description, constraints)
                                         │
-                        payload_generator (Claude, cached per param-signature)
+                        payload_generator (GLM via Z.ai, cached per param-signature)
                                         │  e.g. checkIn:date -> date-shift,
                                         │       0000-00-00, 99999-12-31, non-ISO
                                         ▼
@@ -84,12 +85,19 @@ OpenAPI spec ──► spec_parser ──► InjectionTarget per param (name, ty
                           JSON + HTML report, non-zero exit on FAIL
 ```
 
+**Model provider**: payload generation uses the `anthropic` Python SDK unchanged,
+just pointed at Z.ai's Anthropic-Messages-compatible endpoint
+(`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`) with `FUZZ_MODEL=glm-5.2`.
+`ANTHROPIC_API_KEY` therefore holds your **Z.ai** key, not a real Anthropic key.
+To switch back to Anthropic directly, unset `ANTHROPIC_BASE_URL` (or point it at
+`https://api.anthropic.com`) and set `FUZZ_MODEL` to a Claude model id.
+
 **Caching**: payloads are cached by a *parameter signature*
 (`location|name|type|format|constraints`), not per endpoint — so a `propertyId`
 that appears in 20 operations costs one LLM call, and re-runs cost zero. Cache
 lives in `./cache/`; delete it to regenerate.
 
-**Offline mode**: `--offline` skips Claude and uses a built-in deterministic
+**Offline mode**: `--offline` skips the LLM call and uses a built-in deterministic
 payload set, so the tool still runs in air-gapped CI or without an API key.
 
 ### Deep endpoints and real ids
@@ -115,6 +123,7 @@ test code.
 cd ai-fuzzer
 docker build -t ai-fuzzer:local .
 docker run --rm -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -e ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic -e FUZZ_MODEL=glm-5.2 \
   -v $PWD/reports:/data/reports -v $PWD/cache:/data/cache \
   ai-fuzzer:local \
   --spec https://your-service/v3/api-docs \
@@ -159,7 +168,7 @@ credentials, runs `./run.sh`, then publishes results.
 Setup:
 1. Add two credentials (Secret text) in the Jenkins credential store:
    - `api-fuzz-target-auth` — the value sent under `TARGET_AUTH_HEADER`
-   - `api-fuzz-anthropic-key` — only read when `LAYER` is `ai` or `all`
+   - `api-fuzz-anthropic-key` — your Z.ai API key; only read when `LAYER` is `ai` or `all`
 2. Ensure the agent has Docker + Compose v2 and network access to
    `SPEC_URL`/`TARGET_URL` (the pipeline doesn't manage VPN/network setup).
    `python3` + `curl` on the agent host are used for the fresh-spec fetch and

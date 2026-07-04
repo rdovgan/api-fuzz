@@ -77,8 +77,8 @@ run_ai() {
   echo "════════════════════════════════════════════════════════"
   echo "  ai-fuzzer (native)"
   echo "════════════════════════════════════════════════════════"
-  if [[ -z "${ANTHROPIC_API_KEY:-}" || "${ANTHROPIC_API_KEY}" == *"..."* ]]; then
-    echo "!! ANTHROPIC_API_KEY looks unset/placeholder in .env — skipping ai layer." >&2
+  if [[ -z "${ANTHROPIC_API_KEY:-}" || "${ANTHROPIC_API_KEY}" == *"..."* || "${ANTHROPIC_API_KEY}" == "your-zai-api-key" ]]; then
+    echo "!! ANTHROPIC_API_KEY (Z.ai key) looks unset/placeholder in .env — skipping ai layer." >&2
     RESULTS[ai]=2
     return
   fi

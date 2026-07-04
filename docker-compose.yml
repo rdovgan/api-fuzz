@@ -99,7 +99,8 @@ services:
     restart: "no"
 
   # ---------------------------------------------------------------------------
-  # 3. AI fuzzer — Claude-generated semantic payloads.
+  # 3. AI fuzzer — GLM-generated semantic payloads (via Z.ai's Anthropic-
+  #    compatible endpoint).
   # ---------------------------------------------------------------------------
   ai-fuzzer:
     build: ./ai-fuzzer
@@ -108,7 +109,8 @@ services:
     environment:
       <<: *common-env
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
-      FUZZ_MODEL: ${FUZZ_MODEL:-claude-sonnet-4-5}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.z.ai/api/anthropic}
+      FUZZ_MODEL: ${FUZZ_MODEL:-glm-5.2}
       FUZZ_MAX_PAYLOADS_PER_PARAM: ${FUZZ_MAX_PAYLOADS_PER_PARAM:-12}
     volumes:
       - ./reports:/data/reports

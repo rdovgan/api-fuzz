@@ -14,7 +14,9 @@
 //
 // Required credentials (Jenkins credential store):
 //   - api-fuzz-target-auth       (Secret text) — value sent in TARGET_AUTH_HEADER
-//   - api-fuzz-anthropic-key     (Secret text) — only needed when LAYER includes "ai"
+//   - api-fuzz-anthropic-key     (Secret text) — Z.ai API key; only needed when
+//     LAYER includes "ai" (the AI layer calls GLM models via Z.ai's
+//     Anthropic-Messages-compatible endpoint, so the anthropic SDK is unchanged)
 //
 pipeline {
     agent any
@@ -96,7 +98,8 @@ TARGET_URL=${params.TARGET_URL}
 TARGET_AUTH_HEADER=${params.TARGET_AUTH_HEADER}
 TARGET_AUTH=${env.TARGET_AUTH}
 ANTHROPIC_API_KEY=${anthropicKey}
-FUZZ_MODEL=claude-sonnet-4-5
+ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
+FUZZ_MODEL=glm-5.2
 FUZZ_MAX_PAYLOADS_PER_PARAM=12
 AI_FAIL_ON=${params.AI_FAIL_ON}
 STH_EXAMPLES=${params.STH_EXAMPLES}

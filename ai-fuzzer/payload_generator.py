@@ -1,7 +1,9 @@
 """
-Context-aware payload generation via the Anthropic API.
+Context-aware payload generation via Z.ai's GLM models, through their
+Anthropic-Messages-compatible endpoint (so we keep using the `anthropic` SDK
+unmodified, just pointed at a different base_url).
 
-For each unique parameter *signature* (not each endpoint) we ask Claude to
+For each unique parameter *signature* (not each endpoint) we ask the model to
 produce a set of attack payloads tailored to the field's semantics: SQLi/NoSQLi
 through an email field, date-overflow/shift through a date field, IDOR-ish
 values through an id field, path traversal through a path/filename field, etc.
@@ -22,7 +24,8 @@ import anthropic
 
 from spec_parser import InjectionTarget
 
-MODEL = os.environ.get("FUZZ_MODEL", "claude-sonnet-4-5")
+BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "https://api.z.ai/api/anthropic")
+MODEL = os.environ.get("FUZZ_MODEL", "glm-5.2")
 MAX_PAYLOADS = int(os.environ.get("FUZZ_MAX_PAYLOADS_PER_PARAM", "12"))
 
 _SYSTEM = """You are a security test-data generator for API fuzzing against a \
@@ -51,7 +54,10 @@ Rules:
 
 class PayloadGenerator:
     def __init__(self, cache_dir: str = "/data/cache", api_key: str | None = None):
-        self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        self.client = anthropic.Anthropic(
+            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"),
+            base_url=BASE_URL,
+        )
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
