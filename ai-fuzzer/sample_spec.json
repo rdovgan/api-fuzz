@@ -1,0 +1,71 @@
+{
+  "openapi": "3.0.1",
+  "info": {"title": "Booking Sample", "version": "1.0"},
+  "servers": [{"url": "http://localhost:8080"}],
+  "paths": {
+    "/reservations/{reservationId}": {
+      "get": {
+        "operationId": "getReservation",
+        "parameters": [
+          {"name": "reservationId", "in": "path", "required": true,
+           "schema": {"type": "string", "format": "uuid"},
+           "description": "Reservation identifier"},
+          {"name": "includeFees", "in": "query", "required": false,
+           "schema": {"type": "boolean"}}
+        ],
+        "responses": {"200": {"description": "ok"}}
+      }
+    },
+    "/reservations": {
+      "post": {
+        "operationId": "createReservation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ReservationRequest"}
+            }
+          }
+        },
+        "responses": {"201": {"description": "created"}}
+      }
+    },
+    "/fees": {
+      "get": {
+        "operationId": "listFees",
+        "parameters": [
+          {"name": "checkIn", "in": "query", "required": true,
+           "schema": {"type": "string", "format": "date"},
+           "description": "Check-in date, ISO 8601"},
+          {"name": "propertyId", "in": "query", "required": true,
+           "schema": {"type": "integer", "format": "int64", "minimum": 1}},
+          {"name": "limit", "in": "query",
+           "schema": {"type": "integer", "minimum": 1, "maximum": 100}}
+        ],
+        "responses": {"200": {"description": "ok"}}
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ReservationRequest": {
+        "type": "object",
+        "required": ["guest", "propertyId"],
+        "properties": {
+          "propertyId": {"type": "integer", "format": "int64", "minimum": 1},
+          "guest": {"$ref": "#/components/schemas/Guest"},
+          "notes": {"type": "string", "maxLength": 500}
+        }
+      },
+      "Guest": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": {"type": "string", "format": "email",
+                    "description": "Guest email address"},
+          "firstName": {"type": "string", "minLength": 1, "maxLength": 50}
+        }
+      }
+    }
+  }
+}

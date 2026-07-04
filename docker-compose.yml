@@ -1,0 +1,122 @@
+# AI-assisted API test harness.
+#
+# Three layers, one shared ./reports volume:
+#   1) schemathesis  — type + boundary + schema-conformance fuzzing (from spec)
+#   2) zap           — OWASP ZAP API-scan: SQLi/XSS/injection (from spec)
+#   3) ai-fuzzer     — Claude-generated, field-semantic payloads (from spec)
+#
+# Nothing here is API-specific. Point SPEC_URL / TARGET_URL at any service that
+# exposes an OpenAPI 3.0 doc and run a profile.
+#
+# Usage:
+#   cp .env.example .env   # then edit
+#   docker compose --profile schemathesis up --abort-on-container-exit
+#   docker compose --profile zap          up --abort-on-container-exit
+#   docker compose --profile ai           up --abort-on-container-exit
+#   docker compose --profile all          up --abort-on-container-exit
+#
+# Or just run ./run.sh which wraps all three and aggregates exit codes.
+
+x-common-env: &common-env
+  SPEC_URL: ${SPEC_URL:?set SPEC_URL in .env}
+  TARGET_URL: ${TARGET_URL:?set TARGET_URL in .env}
+  TARGET_AUTH: ${TARGET_AUTH:-}
+  TARGET_AUTH_HEADER: ${TARGET_AUTH_HEADER:-Authorization}
+
+# run.sh pre-fetches the spec once per run (anti-cache) into
+# ./reports/spec-<timestamp>.json and exports SCHEMATHESIS_SPEC / ZAP_SPEC /
+# AI_SPEC pointing at that file's path inside each container's own mount, so
+# all three layers fuzz the exact same fresh spec. Each falls back to SPEC_URL
+# when a service is run standalone (`docker compose --profile ... up` without
+# run.sh).
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Schemathesis — types, boundaries, schema conformance. No AI, no config.
+  # ---------------------------------------------------------------------------
+  schemathesis:
+    image: schemathesis/schemathesis:stable
+    profiles: ["schemathesis", "all"]
+    environment: *common-env
+    volumes:
+      - ./reports:/reports
+    # Schemathesis v4 CLI:
+    #   positional  = spec location; --url = base URL of the running service
+    #   --checks all         : server errors + status/schema/header conformance
+    #   --max-examples       : how hard to fuzz each operation
+    #   --max-response-time  : enables the latency check (time-based injection)
+    #   --continue-on-failure: test everything, don't stop at first failure/op
+    #   --report junit + --report-dir : machine-readable output for CI
+    command: >
+      run ${SCHEMATHESIS_SPEC:-${SPEC_URL}}
+      --url ${TARGET_URL}
+      --checks all
+      --max-examples ${STH_EXAMPLES:-150}
+      --max-response-time 5
+      --continue-on-failure
+      -H "${TARGET_AUTH_HEADER}: ${TARGET_AUTH}"
+      --report junit
+      --report-dir /reports
+      --suppress-health-check all
+    # don't kill the whole compose run if it finds issues
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # 2. OWASP ZAP — active security scan seeded from the OpenAPI spec.
+  # ---------------------------------------------------------------------------
+  zap:
+    image: zaproxy/zap-stable
+    profiles: ["zap", "all"]
+    environment: *common-env
+    volumes:
+      - ./reports:/zap/wrk:rw
+      - ./zap:/zap/hooks:ro
+    # zap-api-scan imports the OpenAPI spec, builds the endpoint tree and runs
+    # the active scanner (SQLi, XSS, path traversal, injection, etc).
+    #   -f openapi : spec format     -t : the spec URL (or local file, see ZAP_SPEC above)
+    #   -r/-J/-x/-w: html / json / xml / markdown reports written to /zap/wrk (= ./reports)
+    #   -z         : pass the target's real host so ZAP hits TARGET_URL
+    #   --hook     : zap/hooks.py sets Attack Strength=LOW / Alert Threshold=HIGH
+    #                on every scan rule right before the active scan starts —
+    #                fewer/gentler payloads, only higher-confidence findings
+    #                reported. See zap/hooks.py for why this needs a hook
+    #                (the simpler `-config scanner.*` global defaults don't
+    #                reliably apply to an already-defined named policy).
+    command: >
+      zap-api-scan.py
+      -t ${ZAP_SPEC:-${SPEC_URL}}
+      -f openapi
+      -r zap-report.html
+      -J zap-report.json
+      -x zap-report.xml
+      -w zap-report.md
+      --hook /zap/hooks/hooks.py
+      -z "-config replacer.full_list(0).description=auth
+          -config replacer.full_list(0).enabled=true
+          -config replacer.full_list(0).matchtype=REQ_HEADER
+          -config replacer.full_list(0).matchstr=${TARGET_AUTH_HEADER}
+          -config replacer.full_list(0).replacement=${TARGET_AUTH}"
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # 3. AI fuzzer — Claude-generated semantic payloads.
+  # ---------------------------------------------------------------------------
+  ai-fuzzer:
+    build: ./ai-fuzzer
+    image: ai-fuzzer:local
+    profiles: ["ai", "all"]
+    environment:
+      <<: *common-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      FUZZ_MODEL: ${FUZZ_MODEL:-claude-sonnet-4-5}
+      FUZZ_MAX_PAYLOADS_PER_PARAM: ${FUZZ_MAX_PAYLOADS_PER_PARAM:-12}
+    volumes:
+      - ./reports:/data/reports
+      - ./cache:/data/cache
+    command: >
+      --spec ${AI_SPEC:-${SPEC_URL}}
+      --base-url ${TARGET_URL}
+      --auth "${TARGET_AUTH}"
+      --out /data/reports
+      --fail-on ${AI_FAIL_ON:-fail}
+    restart: "no"

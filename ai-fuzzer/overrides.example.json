@@ -1,0 +1,6 @@
+{
+  "_comment": "Map parameter name -> a known-valid value. Used for every param EXCEPT the one currently being fuzzed, so requests reach deep logic instead of bouncing off 404/400. Mount this and pass --overrides /data/overrides.json.",
+  "reservationId": "a3f1c2e4-0000-4000-8000-000000000123",
+  "propertyId": 4021,
+  "checkIn": "2025-06-01"
+}

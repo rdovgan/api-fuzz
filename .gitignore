@@ -1,0 +1,9 @@
+.env
+reports/
+cache/
+ai-fuzzer/overrides.json
+__pycache__/
+*.pyc
+.schemathesis/
+.hypothesis/
+.DS_Store
