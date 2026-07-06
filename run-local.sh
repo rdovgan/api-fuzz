@@ -34,20 +34,51 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 MARKER="reports/.marker-${STAMP}"
 touch "${MARKER}"
 
-# Fetch the spec fresh, once, so schemathesis and ai-fuzzer both test the
-# exact same (actual, uncached) version instead of each doing its own fetch.
-SPEC_FILE="reports/spec-${STAMP}.json"
-bust_url="${SPEC_URL}$([[ "${SPEC_URL}" == *'?'* ]] && echo '&' || echo '?')_=$(date +%s%N)"
-echo "[*] fetching fresh spec: ${SPEC_URL}"
-if curl -fsS --max-time 30 \
-     -H 'Cache-Control: no-cache, no-store, must-revalidate' -H 'Pragma: no-cache' \
-     -H "${TARGET_AUTH_HEADER:-Authorization}: ${TARGET_AUTH:-}" \
-     "${bust_url}" -o "${SPEC_FILE}" \
-   && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${SPEC_FILE}" 2>/dev/null; then
-  echo "[*] spec snapshot: ${SPEC_FILE}"
+# Resolve the spec once, so schemathesis and ai-fuzzer both test the exact
+# same version instead of each doing its own fetch. SPEC_URL may be either an
+# http(s) URL (fetched fresh, bypassing any proxy/CDN cache) or a local JSON/
+# YAML OpenAPI file (just used as-is).
+validate_spec() {
+  # exit 0 if the file parses as JSON or YAML, whichever it is
+  python3 -c "
+import sys
+text = open(sys.argv[1], encoding='utf-8').read()
+try:
+    import json
+    json.loads(text)
+    sys.exit(0)
+except Exception:
+    pass
+try:
+    import yaml
+    sys.exit(0 if yaml.safe_load(text) is not None else 1)
+except Exception:
+    sys.exit(1)
+" "$1" 2>/dev/null
+}
+
+if [[ "${SPEC_URL}" == http://* || "${SPEC_URL}" == https://* ]]; then
+  SPEC_FILE="reports/spec-${STAMP}.json"
+  bust_url="${SPEC_URL}$([[ "${SPEC_URL}" == *'?'* ]] && echo '&' || echo '?')_=$(date +%s%N)"
+  echo "[*] fetching fresh spec: ${SPEC_URL}"
+  if curl -fsS --max-time 30 \
+       -H 'Cache-Control: no-cache, no-store, must-revalidate' -H 'Pragma: no-cache' \
+       -H "${TARGET_AUTH_HEADER:-Authorization}: ${TARGET_AUTH:-}" \
+       "${bust_url}" -o "${SPEC_FILE}" \
+     && validate_spec "${SPEC_FILE}"; then
+    echo "[*] spec snapshot: ${SPEC_FILE}"
+  else
+    echo "[!] could not fetch/parse a fresh spec snapshot — falling back to SPEC_URL directly" >&2
+    rm -f "${SPEC_FILE}"
+    SPEC_FILE="${SPEC_URL}"
+  fi
 else
-  echo "[!] could not fetch/parse a fresh spec snapshot — falling back to SPEC_URL directly" >&2
-  rm -f "${SPEC_FILE}"
+  # local OpenAPI file (json or yaml) instead of a URL
+  if [[ ! -f "${SPEC_URL}" ]]; then
+    echo "!! SPEC_URL is neither an http(s) URL nor an existing local file: ${SPEC_URL}" >&2
+    exit 2
+  fi
+  echo "[*] using local spec file: ${SPEC_URL}"
   SPEC_FILE="${SPEC_URL}"
 fi
 

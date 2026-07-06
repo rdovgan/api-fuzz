@@ -40,23 +40,31 @@ Jenkins/Bitbucket pipelines.
 
 ## Always tests the actual current spec
 
-Before running any layer, `run.sh`/`run-local.sh` fetch `SPEC_URL` fresh —
-`Cache-Control: no-cache`/`Pragma: no-cache` headers plus a cache-busting query
-param, so a proxy/CDN/browser cache in front of the spec endpoint can't hand
-back a stale document — and save it as `reports/spec-<timestamp>.json`. That
-one snapshot is then handed to Schemathesis, ZAP, and ai-fuzzer alike, so all
-three layers test the exact same version even if the spec changes mid-run,
-and the report tells you precisely which version was tested. If the fetch or
-JSON parse fails, the run falls back to letting each tool fetch `SPEC_URL`
-itself. (The AI layer's own spec loader applies the same no-cache/cache-bust
-treatment when run standalone, e.g. `docker run ai-fuzzer:local --spec <url>`
-without `run.sh`.)
+`SPEC_URL` accepts either an http(s) URL or a local JSON/YAML OpenAPI file
+path (e.g. `SPEC_URL=./my-api-spec.yaml`) — format is auto-detected from
+content, not the extension.
+
+Before running any layer, `run.sh`/`run-local.sh` resolve `SPEC_URL` once and
+share the result across all three layers:
+- **URL**: fetched fresh — `Cache-Control: no-cache`/`Pragma: no-cache`
+  headers plus a cache-busting query param, so a proxy/CDN/browser cache in
+  front of the spec endpoint can't hand back a stale document — and saved as
+  `reports/spec-<timestamp>.json`. If the fetch or parse fails, the run falls
+  back to letting each tool fetch `SPEC_URL` itself.
+- **Local file**: copied as-is into `reports/spec-<timestamp>.<ext>`.
+
+Either way, that one snapshot is handed to Schemathesis, ZAP, and ai-fuzzer
+alike, so all three test the exact same version even if a URL spec changes
+mid-run, and the report tells you precisely which version was tested. (The AI
+layer's own spec loader applies the same no-cache/cache-bust treatment, and
+the same JSON/YAML auto-detection, when run standalone, e.g.
+`docker run ai-fuzzer:local --spec <url-or-file>` without `run.sh`.)
 
 ## Configuration (`.env`)
 
 | Var | Meaning |
 |-----|---------|
-| `SPEC_URL` | OpenAPI doc URL (Spring: `…/v3/api-docs`) |
+| `SPEC_URL` | OpenAPI doc: a URL (Spring: `…/v3/api-docs`) **or** a local JSON/YAML file path, e.g. `./spec.yaml` |
 | `TARGET_URL` | Base URL of the running service |
 | `TARGET_AUTH` | Value for the `Authorization` header (blank if none) |
 | `ANTHROPIC_API_KEY` | Z.ai API key, for layer 3 (yes, the var is still named `ANTHROPIC_API_KEY` — see below) |
@@ -127,6 +135,21 @@ docker run --rm -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -v $PWD/reports:/data/reports -v $PWD/cache:/data/cache \
   ai-fuzzer:local \
   --spec https://your-service/v3/api-docs \
+  --base-url https://your-service \
+  --auth "Bearer $TOKEN" \
+  --out /data/reports
+```
+
+To use a local JSON/YAML spec file instead of a URL, mount it in and point
+`--spec` at the in-container path:
+
+```bash
+docker run --rm -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -e ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic -e FUZZ_MODEL=glm-5.2 \
+  -v $PWD/my-api-spec.yaml:/data/spec.yaml:ro \
+  -v $PWD/reports:/data/reports -v $PWD/cache:/data/cache \
+  ai-fuzzer:local \
+  --spec /data/spec.yaml \
   --base-url https://your-service \
   --auth "Bearer $TOKEN" \
   --out /data/reports

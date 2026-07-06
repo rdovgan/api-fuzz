@@ -6,7 +6,8 @@ operation, every parameter (query / path / header) and every leaf property of
 the JSON request body, with enough context (name, description, type, format,
 constraints) for the LLM to generate semantically-aware payloads.
 
-Supports both a URL (e.g. Spring's /v3/api-docs) and a local file.
+Supports both a URL (e.g. Spring's /v3/api-docs) and a local file, and either
+JSON or YAML in both cases (detected from content, not the extension).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 import httpx
+import yaml
 
 
 @dataclass
@@ -67,11 +69,20 @@ class SpecParser:
             resp = httpx.get(source + bust, headers=no_cache_headers, timeout=30.0,
                               follow_redirects=True)
             resp.raise_for_status()
-            spec = resp.json()
+            text = resp.text
         else:
             with open(source, "r", encoding="utf-8") as fh:
-                spec = json.load(fh)
-        return cls(spec)
+                text = fh.read()
+        return cls(cls._parse(text))
+
+    @staticmethod
+    def _parse(text: str) -> dict[str, Any]:
+        """Parse an OpenAPI document as JSON or YAML — sniffed from content, since
+        a spec fetched from a URL may not have a .json/.yaml extension to go by."""
+        stripped = text.lstrip()
+        if stripped.startswith(("{", "[")):
+            return json.loads(text)
+        return yaml.safe_load(text)
 
     def base_url(self) -> str | None:
         servers = self.spec.get("servers") or []

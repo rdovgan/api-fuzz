@@ -30,7 +30,7 @@ pipeline {
         string(
             name: 'SPEC_URL',
             defaultValue: 'http://172.18.4.202/v3/api-docs',
-            description: 'OpenAPI 3.0 document URL.'
+            description: 'OpenAPI 3.0 document: a URL, or a local JSON/YAML file path reachable on the agent workspace.'
         )
         string(
             name: 'TARGET_URL',

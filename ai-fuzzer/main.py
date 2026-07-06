@@ -28,7 +28,8 @@ from report import write_html_report, write_markdown_report
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="AI semantic API fuzzer")
-    p.add_argument("--spec", required=True, help="OpenAPI URL or file path")
+    p.add_argument("--spec", required=True,
+                   help="OpenAPI URL or local file path (JSON or YAML, either way)")
     p.add_argument("--base-url", default=None, help="Target base URL (defaults to spec servers[0])")
     p.add_argument("--auth", default=os.environ.get("TARGET_AUTH", ""),
                    help="Value for Authorization header, e.g. 'Bearer xxx'")
