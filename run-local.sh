@@ -82,6 +82,39 @@ else
   SPEC_FILE="${SPEC_URL}"
 fi
 
+# Two-step auth: TARGET_AUTH_HEADER/TARGET_AUTH (e.g. x-api-key) goes on every
+# request. If TARGET_LOGIN_PATH is set, log in first to get a JWT and send it
+# as a second header (Authorization: Bearer <token>) so business endpoints
+# that require both don't just bounce off 401.
+BEARER_TOKEN=""
+if [[ -n "${TARGET_LOGIN_PATH:-}" && -n "${TARGET_LOGIN_USERNAME:-}" ]]; then
+  echo "[*] logging in via ${TARGET_URL}${TARGET_LOGIN_PATH} to obtain bearer token"
+  LOGIN_RESPONSE=$(curl -fsS --max-time 15 \
+    -H "${TARGET_AUTH_HEADER:-x-api-key}: ${TARGET_AUTH:-}" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"${TARGET_LOGIN_USERNAME}\",\"password\":\"${TARGET_LOGIN_PASSWORD:-}\"}" \
+    "${TARGET_URL}${TARGET_LOGIN_PATH}" 2>/dev/null)
+  BEARER_TOKEN=$(python3 -c "
+import json, sys
+try:
+    print(json.loads(sys.argv[1]).get('token', ''))
+except Exception:
+    pass
+" "${LOGIN_RESPONSE:-}" 2>/dev/null)
+  if [[ -z "${BEARER_TOKEN}" ]]; then
+    echo "[!] login failed or no 'token' field in response — continuing with ${TARGET_AUTH_HEADER:-x-api-key} only" >&2
+  else
+    echo "[*] obtained bearer token"
+  fi
+fi
+
+AUTH_ARGS_STH=(-H "${TARGET_AUTH_HEADER:-Authorization}: ${TARGET_AUTH}")
+AUTH_ARGS_AI=(--header "${TARGET_AUTH_HEADER:-Authorization}: ${TARGET_AUTH}")
+if [[ -n "${BEARER_TOKEN}" ]]; then
+  AUTH_ARGS_STH+=(-H "Authorization: Bearer ${BEARER_TOKEN}")
+  AUTH_ARGS_AI+=(--auth "Bearer ${BEARER_TOKEN}")
+fi
+
 LAYER="${1:-all}"
 declare -A RESULTS
 
@@ -96,7 +129,7 @@ run_schemathesis() {
     --max-examples "${STH_EXAMPLES:-150}" \
     --max-response-time 5 \
     --continue-on-failure \
-    -H "${TARGET_AUTH_HEADER:-Authorization}: ${TARGET_AUTH}" \
+    "${AUTH_ARGS_STH[@]}" \
     --report junit \
     --report-dir ./reports \
     --suppress-health-check all
@@ -116,7 +149,7 @@ run_ai() {
   FUZZ_CACHE="./cache" python3 ai-fuzzer/main.py \
     --spec "${SPEC_FILE}" \
     --base-url "${TARGET_URL}" \
-    --header "${TARGET_AUTH_HEADER:-Authorization}: ${TARGET_AUTH}" \
+    "${AUTH_ARGS_AI[@]}" \
     --out ./reports \
     --fail-on "${AI_FAIL_ON:-fail}"
   RESULTS[ai]=$?
