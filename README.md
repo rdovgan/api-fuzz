@@ -66,13 +66,62 @@ the same JSON/YAML auto-detection, when run standalone, e.g.
 |-----|---------|
 | `SPEC_URL` | OpenAPI doc: a URL (Spring: `…/v3/api-docs`) **or** a local JSON/YAML file path, e.g. `./spec.yaml` |
 | `TARGET_URL` | Base URL of the running service |
-| `TARGET_AUTH` | Value for the `Authorization` header (blank if none) |
+| `TARGET_AUTH_HEADER` | Header name sent on every request (e.g. `x-api-key`, or `Authorization`). Blank = no static header. |
+| `TARGET_AUTH` | Value for `TARGET_AUTH_HEADER` (blank if none) |
+| `TARGET_LOGIN_PATH` | Path (relative to `TARGET_URL`) used to obtain a JWT before fuzzing, e.g. `/auth/login`. Blank = skip the login step entirely. |
+| `TARGET_LOGIN_USERNAME` / `TARGET_LOGIN_PASSWORD` | Credentials posted as `{"username","password"}` to `TARGET_LOGIN_PATH` |
 | `ANTHROPIC_API_KEY` | Z.ai API key, for layer 3 (yes, the var is still named `ANTHROPIC_API_KEY` — see below) |
 | `ANTHROPIC_BASE_URL` | Anthropic-compatible endpoint (default `https://api.z.ai/api/anthropic`) |
 | `FUZZ_MODEL` | model for payload generation (default `glm-5.2`) |
 | `FUZZ_MAX_PAYLOADS_PER_PARAM` | cap per parameter (default 12) |
 | `AI_FAIL_ON` | `fail` \| `warn` \| `never` — severity that fails the build |
 | `STH_EXAMPLES` | Schemathesis examples per operation (default 150) |
+
+## Two-step auth (API key + login-derived JWT)
+
+Some APIs (e.g. this repo's own test target, a Spring Boot service) use two
+auth layers stacked:
+
+1. **`TARGET_AUTH_HEADER`/`TARGET_AUTH`** (e.g. `x-api-key: <key>`) — a static
+   header required on *every* request, including the spec fetch itself.
+2. **A JWT obtained by logging in** — most business endpoints additionally
+   require `Authorization: Bearer <token>`, where `<token>` comes from calling
+   a login endpoint first (e.g. `POST /auth/login` with `{"username",
+   "password"}`, which returns `{"token": "..."}`).
+
+`run-local.sh` (and `run.sh`) handle this automatically, before either fuzz
+layer starts:
+
+- If `TARGET_LOGIN_PATH` is set in `.env`, the script POSTs
+  `TARGET_LOGIN_USERNAME`/`TARGET_LOGIN_PASSWORD` to
+  `${TARGET_URL}${TARGET_LOGIN_PATH}`, sending `TARGET_AUTH_HEADER`/`TARGET_AUTH`
+  on that call too (the API key is required just to reach the login endpoint).
+- It parses the JSON response's `token` field with `python3 -c "...json..."`.
+- If a token comes back, **both** headers are sent to Schemathesis (`-H`
+  twice) and ai-fuzzer (`--header` for the API key, `--auth` for
+  `Bearer <token>`) for the rest of the run.
+- If login fails or the response has no `token` field, the run continues with
+  only `TARGET_AUTH_HEADER`/`TARGET_AUTH` and prints a warning — endpoints that
+  need the JWT will legitimately 401/403 rather than the whole run aborting.
+- Leave `TARGET_LOGIN_PATH` blank to skip this entirely (single static header
+  only, the original behavior).
+
+**Endpoints that don't need auth at all** (health checks, the spec endpoint
+itself, sometimes login) will just ignore the extra headers — no special
+casing needed on the harness side.
+
+**Token lifetime**: the token is fetched once per run and reused for every
+request in that run. If a target's tokens expire faster than a full fuzz run
+takes, lower `STH_EXAMPLES`/`FUZZ_MAX_PAYLOADS_PER_PARAM` or re-run more often
+rather than expecting the harness to refresh mid-run — it doesn't.
+
+**Safety note**: an *invalid* value in `TARGET_AUTH` sent repeatedly can trip
+some services' abuse/lockout protection (seen on this project's own target: a
+wrong `x-api-key` value produced consistent `403`s on *all* subsequent
+requests, including previously-working unauthenticated ones, until the app
+was restarted). Verify the API key with a plain `curl` against an
+unauthenticated endpoint (e.g. the spec URL or a health check) before pointing
+a full fuzz run at a target.
 
 ## How the AI layer works
 
