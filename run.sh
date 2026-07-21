@@ -151,12 +151,14 @@ JUNIT_FILES=$(find reports -name 'junit-*.xml' -newer "${MARKER}" 2>/dev/null)
 ZAP_JSON=$(find reports -name 'zap-report.json' -newer "${MARKER}" 2>/dev/null | head -1)
 AI_JSON=$(find reports -name 'ai-fuzz-*.json' -newer "${MARKER}" 2>/dev/null | head -1)
 SUMMARY_MD="reports/summary-${STAMP}.md"
+FINDINGS_MD="reports/findings-${STAMP}.md"
 # shellcheck disable=SC2086
-python3 aggregate_report.py --out "${SUMMARY_MD}" \
+python3 aggregate_report.py --out "${SUMMARY_MD}" --findings-out "${FINDINGS_MD}" \
   --spec-url "${SPEC_URL}" --spec-file "${SPEC_FILE}" --target-url "${TARGET_URL}" \
   --generated-at "$(date -u +%FT%TZ)" \
   --junit ${JUNIT_FILES} --zap-json "${ZAP_JSON}" --ai-json "${AI_JSON}"
 echo "  summary: ${SUMMARY_MD}"
+echo "  detailed findings: ${FINDINGS_MD}"
 
 rm -f "${MARKER}"
 exit "${overall}"

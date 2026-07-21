@@ -61,6 +61,52 @@ def render_schemathesis(paths: list[str]) -> tuple[str, bool]:
     return "\n".join(lines) + "\n", (failures + errors) > 0
 
 
+def render_schemathesis_findings(paths: list[str]) -> str:
+    """Full failure/error text per endpoint (status codes, response body,
+    reproduce curl) — the detail the summary table's one-liners omit."""
+    if not paths:
+        return "_not run_\n"
+    sections = []
+    for p in paths:
+        try:
+            root = ET.parse(p).getroot()
+        except (ET.ParseError, OSError):
+            continue
+        for ts in root.findall("testsuite") or [root]:
+            for tc in list(ts):
+                probs = tc.findall("failure") + tc.findall("error")
+                if not probs:
+                    continue
+                name = tc.attrib.get("name", "?")
+                body = "\n\n---\n\n".join((prob.text or "").strip() for prob in probs)
+                sections.append(f"### `{name}`\n\n```text\n{body}\n```\n")
+    if not sections:
+        return "No failures.\n"
+    return "\n".join(sections)
+
+
+def render_ai_findings(path: str | None) -> str:
+    if not path or not Path(path).exists():
+        return "_not run_\n"
+    try:
+        data = json.loads(Path(path).read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return f"could not parse {path}: {exc}\n"
+    rows = [f for f in data.get("findings", []) if f["verdict"] != "PASS"]
+    if not rows:
+        return "No WARN/FAIL findings.\n"
+    sections = []
+    for f in rows:
+        sections.append(
+            f"### `{f['method'].upper()} {f['path']}` — {f['location']}:{f['param']} ({f['verdict']})\n\n"
+            f"- **Category:** {f['category']}\n"
+            f"- **Reason:** {f['reason']}\n"
+            f"- **Payload:** `{f['payload']}`\n"
+            f"- **Status:** {f.get('status', '-')}\n"
+        )
+    return "\n".join(sections)
+
+
 def render_zap(path: str | None) -> tuple[str, bool]:
     if not path or not Path(path).exists():
         return "_not run_\n", False
@@ -124,6 +170,9 @@ def render_ai(path: str | None) -> tuple[str, bool]:
 def main() -> int:
     p = argparse.ArgumentParser(description="Aggregate all layers into one Markdown report")
     p.add_argument("--out", required=True)
+    p.add_argument("--findings-out", default="",
+                   help="Optional: write full failure detail (status codes, response "
+                        "bodies, reproduce curl) to this separate Markdown file")
     p.add_argument("--spec-url", default="")
     p.add_argument("--spec-file", default="")
     p.add_argument("--target-url", default="")
@@ -167,6 +216,23 @@ def main() -> int:
     ]
     Path(args.out).write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"[*] aggregate report: {args.out}")
+
+    if args.findings_out:
+        findings_out = [
+            "# API Fuzz — Detailed Findings",
+            "",
+            *meta,
+            "",
+            "## Schemathesis — full failure detail",
+            "",
+            render_schemathesis_findings(args.junit),
+            "## ai-fuzzer — WARN/FAIL detail",
+            "",
+            render_ai_findings(args.ai_json or None),
+        ]
+        Path(args.findings_out).write_text("\n".join(findings_out) + "\n", encoding="utf-8")
+        print(f"[*] detailed findings: {args.findings_out}")
+
     return 1 if overall_fail else 0
 
 
